@@ -1,128 +1,128 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.9;
 
-contract ERC20Token {
-    // The address that will own this contract i.e msg.sender
-    address public admin;
-    string name;
-    string symbol;
+import "@openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin-contracts/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import "@openzeppelin-contracts/contracts/access/AccessControl.sol";
+//import "./IERC20.sol";
 
-    // The total supply of the token
-    uint256 private totalSupply;
+contract EkolanceToken is ERC20, ERC20Burnable, AccessControl, IERC20 {
+    bytes32 private constant TUTOR_ROLE = keccak256("TUTOR_ROLE");
+    bytes32 private constant STUDENT_ROLE = keccak256("STUDENT_ROLE");
 
-    // The mapping that stores the balance of each address
-    mapping(address => uint256) private balanceOf;
+    // struct RoleData {
+    //     mapping(address => bool) members;
+    //     bytes32 adminRole;
+    // }
+    mapping(address => uint256) public _balances;
 
-    // The mapping that stores the allowance of tokens for each tutor
-    mapping(address => mapping(address => uint256)) private allowance;
+    mapping(address => mapping(address => uint256)) private _allowances;
 
-    // mapping to check that a tutor is approved to mint
-    mapping(address => bool) private minters;
+    uint256 private _totalSupply;
+    mapping(bytes32 => RoleData) private _roles;
 
-    // The event that is emitted when tokens are transferred
-    event Transfer(address indexed from, address indexed to, uint256 tokens);
+    //bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
 
-    // event emitted when token is created
-    event newTokenCreated(address indexed admin, string name, string symbol);
-
-    // The event that is emitted when the allowance of tokens for a tutor is set or updated
-    event Approval(address indexed tokenadmin, address indexed tutor, uint256 tokens);
-
-    // event when token is minted to student
-    event mint(address tutor, address student, uint amount);
-
-    // event for burnt tokens
-    event burntTokens(address indexed student, uint256);
+    // string name;
+    // string symbol;
 
 
-    modifier onlyAdmin {
-        require(msg.sender == admin, "Only admin has priviledge");
-        _;
+    constructor(string memory name, string memory symbol)  ERC20(name, symbol) {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(TUTOR_ROLE, msg.sender);
     }
 
-    constructor()  {
-        admin = msg.sender;
+    function mint(address to, uint256 amount) public onlyRole(TUTOR_ROLE) {
+        if  (to == address(0)) revert("Cannot mint toaddress zero");
+        _mint(to, amount);
+    }
+
+     /**
+     * @dev See {IERC20-transfer}.
+     *
+     * Requirements:
+     *
+     * - `to` cannot be the zero address.
+     * - the caller must have a balance of at least `amount`.
+     */
+    function transfer(address to, uint256 amount) public virtual override returns (bool) {
+        address owner = _msgSender();
+        _transfer(owner, to, amount);
+        return true;
+    }
+
+
+     /**
+     * @dev Returns the admin role that controls `role`. See {grantRole} and
+     * {revokeRole}.
+     *
+     * To change a role's admin, use {_setRoleAdmin}.
+     */
+    function getRoleAdmin(bytes32 role) public view virtual override returns (bytes32) {
+        return _roles[role].adminRole;
+    }
+
+    /**
+     * @dev Grants `role` to `account`.
+     *
+     * If `account` had not been already granted `role`, emits a {RoleGranted}
+     * event.
+     *
+     * Requirements:
+     *
+     * - the caller must have ``role``'s admin role.
+     *
+     * May emit a {RoleGranted} event.
+     */
+    function grantRole(bytes32 role, address account) public virtual override onlyRole(getRoleAdmin(role)) {
+        _grantRole(role, account);
+    }
+
+    // function stringToBytes(string memory role) internal returns (bytes32){
+    //     return bytes32(role);
+    // }
+    /**
+     * @dev Revokes `role` from `account`.
+     *
+     * If `account` had been granted `role`, emits a {RoleRevoked} event.
+     *
+     * Requirements:
+     *
+     * - the caller must have ``role``'s admin role.
+     *
+     * May emit a {RoleRevoked} event.
+     */
+    function revokeRole(bytes32 role, address account) public virtual override onlyRole(getRoleAdmin(role)) {
+        _revokeRole(role, account);
     }
     
-    function createERC20Token(string memory _name, string memory _symbol) public onlyAdmin() {
-        name = _name;
-        symbol = _symbol;
-        emit newTokenCreated(admin, name, symbol);
+    /**
+     * @dev See {IERC20-balanceOf}.
+     */
+    function balanceOf(address account) public view virtual override returns (uint256) {
+        return _balances[account];
     }
 
-    // Returns the total supply of the token
-    function ERC20GetTotalSupply() public view returns (uint256) {
-        return totalSupply;
-    }
+    /**
+    *@dev Only student can burn token
+    *@param account - address of student. must have student_role access
+    *@param amount - amount of tokens to burn
+    */
+    function _burn(address account, uint256 amount) internal virtual override onlyRole(STUDENT_ROLE) {
+        require(account != address(0), "ERC20: burn from the zero address");
 
-    // Returns the balance of the specified address
-    function ERC20GetBalanceOf(address tokenadmin) public view returns (uint256 available_token_balance) {
-        return balanceOf[tokenadmin];
-    }
+        _beforeTokenTransfer(account, address(0), amount);
 
-    function ERC20GetTokenSummary() public view returns (string memory _name, string memory _symbol, uint256 _totalSupply) {
-        return (name, symbol,totalSupply);
-    }
-
-    
-    // Approves the specified tutor allowance for number of tokens it can mint
-    function ERC20Approve_tutor(address tutor, uint256 tokenAmount) public onlyAdmin() {
-        require(tutor != address(0), "caannot approve to the zero address");
-        //require(tokens <= balanceOf[msg.sender], "ERC20: approve exceed balance");
-
-        // To change the approval of an tutor, you first have to reset their allowance
-        // to zero before setting it to the new value
-        allowance[msg.sender][tutor] = 0;
-
-        // Set the allowance
-        allowance[msg.sender][tutor] = tokenAmount;
-        authorizeMint(tutor);
-
-        // Emit the Approval event
-        emit Approval(msg.sender, tutor, tokenAmount);
-    }
-
-    // Transfers the specified tokens from the msg.sender balance to the specified address
-    function ERC20Transfer(address to, uint256 tokens) public {
-        require(to != address(0), "ERC20: transfer to the zero address");
-        require(tokens <= balanceOf[msg.sender], "ERC20: transfer exceed balance");
-
-        // Subtract the tokens from the sender's balance
-        balanceOf[msg.sender] -= tokens;
-
-        // Add the tokens to the recipient's balance
-        balanceOf[to] += tokens;
-
-        // Emit the Transfer event
-        emit Transfer(msg.sender, to, tokens);
-    }
-
-
-    // allows tutor to mint token
-    function authorizeMint(address minter) private onlyAdmin() {
-        //require(msg.sender == admin, "Only admin can add minters.");
-        minters[minter] = true;
-    }
-
-    
-    // Allows an approved tutor to mint tokens to student address
-    function ERC20mintToken(address student, uint256 tokens) public {
-        require(minters[msg.sender], "Not authorized t mint");
-        require(tokens <= allowance[msg.sender][msg.sender], "amount to mint > allowed limit.");
-        balanceOf[student] += tokens;
-        totalSupply += tokens;
-        allowance[msg.sender][msg.sender] -= tokens;
-        emit mint(msg.sender, student, tokens);
-
-    }
-
-    function ERC20Burntoken (address student, uint256 token) public {
-        if (msg.sender != student){ // address input is require to avoid accidental burning of token
-            revert ("Not owner of token");
+        uint256 accountBalance = _balances[account];
+        require(accountBalance >= amount, "ERC20: burn amount exceeds balance");
+        unchecked {
+            _balances[account] = accountBalance - amount;
+            // Overflow not possible: amount <= accountBalance <= totalSupply.
+            _totalSupply -= amount;
         }
-        require(token <= balanceOf[student], "Insufficient token balance");
-        balanceOf[student] -= token;
-        totalSupply -= token;
-        emit burntTokens(student,token);
+
+        emit Transfer(account, address(0), amount);
+
+        _afterTokenTransfer(account, address(0), amount);
     }
 }
